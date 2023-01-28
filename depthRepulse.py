@@ -13,11 +13,16 @@ import math
 from scipy.signal import argrelextrema, find_peaks
 import random
 import time
+import itertools
+from multiprocessing import Process
+from multiprocessing import Value
 
 
 
-img1_undistorted = cv2.imread("left_img.png")
-img2_undistorted = cv2.imread("right_img.png")
+
+
+img1_undistorted = cv2.imread("leftIm.png")
+img2_undistorted = cv2.imread("rightIm.png")
 
 
 block_size = 13
@@ -64,7 +69,14 @@ dispser = disparity_SGBMs
 
 
 
-dataSize = 18
+dataSize = 8
+divNum = 6
+
+
+
+
+
+
 
 """
   Args:
@@ -115,7 +127,7 @@ def plot_graph(X, Y, delx, dely,obj, fig, ax, loc,r,color,start_goal=np.array([[
 
 
 def add_obstacle(X, Y , delx, dely, goal, xLoc, yLoc, rads):
-    s = (rads + 1) * 2
+    s = (rads + 1) * 1.5
 
     # generating obstacle with random sizes
     r = rads
@@ -174,6 +186,7 @@ def add_obstacles(X, Y , delx, dely, goal, locList, radList):
     #obstacle0 = xLoc
     #obstacle1 = yLoc
     #obstacle = (xLoc, yLoc)
+    print(locList, radList)
     for i in range(len(x)):
         for j in range(len(y)):
 
@@ -230,49 +243,344 @@ def add_obstacles(X, Y , delx, dely, goal, locList, radList):
 
 def blur(disps):
     he, we = disps.shape
-    stepx = int(we / 8)
-    stepy = int(he / 8)
-    yDim = int(he / stepy)
-    xDim = int(we / stepx)
-    newImageX = np.empty((yDim, xDim), int)
-    newImageY = np.empty((xDim, yDim), int)
-    hb = 0
-    for yWind in range(0, int(he / stepy)):
-        begy = stepy * yWind
-        prevAv = 0
-        for xWind in range(0, int(we / stepx)):
-            begx = stepx * xWind
-            colAvg = 0
-            for yVT in range(begy, (begy + stepy)):
-                for xVT in range(begx, (begx + stepx)):
-                    if disps[yVT][xVT] <= 3:
-                        disps[yVT][xVT] = 255
-                    colAvg += disps[yVT][xVT]
-            colAvg = colAvg / (stepx * stepy)
-            """for yVT in range(begy, (begy + stepy)):
-                for xVT in range(begx, (begx + stepx)):
-                    disk[yVT][xVT] = int(colAvg)"""
-            hb += 1
-            newImageX[yWind][xWind] = colAvg
-            newImageY[xWind][yWind] = colAvg
-            prevAv = 0
-    return newImageX, newImageY
+    #print(he, we)
+    yDim = int(he / divNum)
+    xDim = int(we / divNum)
+    newImX = np.empty((divNum, divNum), int)
+    newImY = np.empty((divNum, divNum), int)
+    for ye in range(0, divNum):
+        yD = yDim * ye
+        for xe in range(0, divNum):
+            xD = xe * xDim
+            #print(xD, yD)
+            arrAlt = disps[yD:(yD + yDim), xD:(xD + xDim)]
+            currMean = int(np.mean(arrAlt))
+            newImX[ye][xe] = currMean
+            newImY[xe][ye] = currMean
+    #print(newImX)
+    return newImX, newImY
+
+
+
+
+
+
+
+
+
+def mainMethod(newImageX, yPix, radSize, addFactor, seek_points, originPoint, x0, z0):
+    goalX = dataSize * 0.5
+    goal = [goalX,dataSize]
+    #print(newImageX[yPix])
+    #print(radSize, seek_points, originPoint, goal, goalX)
+
+    #delx, dely =add_goal(X, Y,3, 8 , goal2)
+    #delx, dely =add_goal(X, Y,3, 8 , goal3)
+    fig, ax = plt.subplots(figsize = (10,10))
+    xBias = 0
+    xVsList = []
+    zVsList = []
+    prevAdd = 0
+    for xPix in range(0, len(newImageX[yPix])):
+        zVal = int(newImageX[yPix][xPix] / (255 / dataSize)) + (dataSize * 0.3)
+        if zVal > dataSize:
+            zVal = dataSize
+        zRadius = zVal * (radSize / dataSize)
+        zRadius = radSize - zRadius
+        #print(zRadius, newImageX[yPix][xPix], xPix)
+        if zRadius > (radSize * 0.4):
+            if (xPix + 1) <= (divNum / 2):
+                #print("left")
+                xBias += (zRadius * addFactor)
+            else:
+                #print("right")
+                xBias -= (zRadius * addFactor)
+        #zRadius = zRadius ** 1.3Test2
+        xValGraph = xPix * (dataSize / len(newImageX[yPix]))
+        xVsList.append(xValGraph)
+        zVsList.append(zVal)
+        #print(f"{zVal}  {xValGraph}  {xPix}  {yPix}  {zRadius}
+    #print("bias: " + str(xBias))
+    goal = [(goalX + xBias), dataSize]
+    X, Y = np.meshgrid(x,y)
+    delx, dely =add_goal(X, Y,2, 2 , goal)
+    obsListLocs = []
+    obsListRads = []
+    for hg in range(0, len(xVsList)):
+        zRadius = zVsList[hg] * (radSize / dataSize)
+        zRadius = radSize - zRadius
+        obsListLocs.append((xVsList[hg], zVsList[hg]))
+        obsListRads.append(zRadius)
+        if zRadius > (radSize * 0.4):
+            delx, dely, loc, r = add_obstacle(X,Y, delx,dely,goal, xVsList[hg], zVsList[hg], zRadius)
+            #plot_graph(X, Y, delx, dely , 'Obstacle',fig, ax, loc, r , 'm')
+    strm = ax.streamplot(X,Y,delx,dely, start_points=seek_points,linewidth=3, cmap='autu')
+    segs = strm.lines.get_segments()
+    num_pts = len(segs)
+
+    """flow_line = np.full((num_pts, 2), np.nan)
+    for i in range(num_pts):
+        flow_line[i,:] = segs[i][0,:]
+    for jb in range(0, len(segs)):
+        print(jb)
+        print(segs[jb][0][0], segs[jb][0][1])
+        print(flow_line[jb][0], flow_line[jb][1])
+        print("  ")"""
+    prevXV = 0
+    prevYV = 0
+    prevDeriv = 0
+    xIntegral = 0
+    xCompTot = 0
+    yCompTot = 0
+    ptsOfInt = 10
+
+    poIs = int(num_pts / ptsOfInt)
+    #print(poIs)
+    #print(num_pts)
+    #print(" ")
+    for ji in range(1, (ptsOfInt + 1)):
+        currInd = (poIs * ji) - 1
+        #print(currInd)
+        if segs[currInd][0][1] < (dataSize * 0.7):
+            xV = segs[currInd][0][0] - originPoint
+            yV = segs[currInd][0][1]
+            xCompTot += xV
+            yCompTot += (yV - prevYV)
+            #print(xV, segs[currInd][0][1])
+            prevYV = yV
+    #print(" ")
+
+    """for o in flow_line:
+        if o[1] < (dataSize * 0.5):
+            xV = o[0] - originPoint
+            yV = o[1]
+            xCompTot += xV
+            yCompTot += (yV - prevYV)
+            #print(yCompTot)
+            #currXInt = (((xV + prevXV) * 0.5) * (yV - prevYV))
+            #xIntegral += currXInt
+            #prevXV = xV
+            prevYV = yV"""
+    #print(f"X: {xBias} {xCompTot}")
+    #print(" ")
+    #plt.show()
+    #plt.close()
+    #time.sleep(0.2)
+    #print(" ")
+    #print(xCompTot)
+    #print(" ")
+    x0.value = x0.value + xCompTot
+    z0.value = z0.value + yCompTot
+
+
+def getLeanX(newImageList, radSize, addFactor, seek_points, originPoint, v0, v1):
+
+    goalX = dataSize * 0.5
+    goal = [goalX,dataSize]
+    newImageX = newImageList
+    xVector = [0, 0]
+    totalXInt = 0
+    procList = []
+    xCompensate = Value("f", 0)
+    zCompensate = Value("f", 0)
+    for yPix in range(0, len(newImageX)):
+        proc = Process(target=mainMethod, args=(newImageX, yPix, radSize, addFactor, seek_points, originPoint, xCompensate, zCompensate))
+        procList.append(proc)
+        mainMethod(newImageX, yPix, radSize, addFactor, seek_points, originPoint, xCompensate, zCompensate)
+    """for process in procList:
+        process.start()"""
+    for process in procList:
+        #process.join()
+        """X, Y = np.meshgrid(x,y)
+        delx, dely =add_goal(X, Y,2, 2 , goal)
+        #delx, dely =add_goal(X, Y,3, 8 , goal2)
+        #delx, dely =add_goal(X, Y,3, 8 , goal3)
+        fig, ax = plt.subplots(figsize = (10,10))
+        xBias = 0
+        xVsList = []
+        zVsList = []
+        prevAdd = 0
+        for xPix in range(0, len(newImageX[yPix])):
+            zVal = int(newImageX[yPix][xPix] / (255 / dataSize)) + (dataSize * 0.25)
+            if zVal > dataSize:
+                zVal = dataSize
+            zRadius = zVal * (radSize / dataSize)
+            zRadius = radSize - zRadius
+            xErr = (len(newImageX[yPix]) * 0.5) - xPix
+            xAdd = zRadius * 1.0
+            if xErr < 0.0:
+                xAdd *= (-1.0)
+            elif xErr > 0.0:
+                xAdd *= (1.0)
+            xBias += ((xAdd + prevAdd) * 0.5) * addFactor
+            prevAdd = xAdd
+            #zRadius = zRadius ** 1.3
+            xValGraph = int(xPix * (dataSize / len(newImageX[yPix])))
+            xVsList.append(xValGraph)
+            zVsList.append(zVal)
+            #print(f"{zVal}  {xValGraph}  {xPix}  {yPix}  {zRadius}")
+        goal = [(goalX + xBias), dataSize]
+        obsListLocs = []
+        obsListRads = []
+        for hg in range(0, len(xVsList)):
+            zRadius = zVsList[hg] * (radSize / dataSize)
+            zRadius = radSize - zRadius
+            obsListLocs.append((xVsList[hg], zVsList[hg]))
+            obsListRads.append(zRadius)
+            delx, dely, loc, r = add_obstacle(X,Y, delx,dely,goal, xVsList[hg], zVsList[hg], zRadius)
+            #plot_graph(X, Y, delx, dely , 'Obstacle',fig, ax, loc, r , 'm')
+
+        #delx, dely = add_obstacles(X,Y, delx,dely,goal, obsListLocs, obsListRads)
+        #print(obsListLocs)
+        #print(obsListRads)
+        strm = ax.streamplot(X,Y,delx,dely, start_points=seek_points,linewidth=3, cmap='autu')
+        segs = strm.lines.get_segments()
+        num_pts = len(segs)
+        flow_line = np.full((num_pts, 2), np.nan)
+        for i in range(num_pts):
+            flow_line[i,:] = segs[i][0,:]
+        prevXV = 0
+        prevYV = 0
+        prevDeriv = 0
+        xIntegral = 0
+        xCompTot = 0
+        yCompTot = 0
+        for o in flow_line:
+            if o[1] < (dataSize * 0.7):
+                xV = (round(o[0], 2) - originPoint)
+                yV = (round(o[1], 2))
+                xCompTot += xV
+                yCompTot += (yV - prevYV)
+                #print(yCompTot)
+                currXInt = (((xV + prevXV) * 0.5) * (yV - prevYV))
+                xIntegral += currXInt
+                prevXV = xV
+                prevYV = yV
+        xVector[0] += xCompTot
+        xVector[1] += yCompTot
+        print(f"X: {xBias} {xVector}")
+        print(" ")
+        #plt.show()
+        plt.close()
+        time.sleep(0.2)"""
+    v0.value = xCompensate.value
+    v1.value = zCompensate.value
+    print(v0.value, v1.value)
+    return xVector, totalXInt
+
+
+def getLeanY(newImageList, radSize, addFactor, seek_points, originPoint, v0, v1):
+
+    goalX = int(dataSize * 0.5)
+    goal = [goalX,dataSize]
+    newImageX = newImageList
+    yVector = [0, 0]
+    totalYInt = 0
+    yCompensate = Value("f", 0)
+    zCompensate = Value("f", 0)
+    for yPix in range(0, len(newImageX)):
+        proc = Process(target=mainMethod, args=(newImageX, yPix, radSize, addFactor, seek_points, originPoint, yCompensate, zCompensate))
+        procList.append(proc)
+        #mainMethod(newImageX, yPix, radSize, addFactor, seek_points, originPoint)
+    for process in procList:
+        process.start()
+    for process in procList:
+        process.join()
+        """X, Y = np.meshgrid(x,y)
+        delx, dely =add_goal(X, Y,2, 2 , goal)
+        #delx, dely =add_goal(X, Y,3, 8 , goal2)
+        #delx, dely =add_goal(X, Y,3, 8 , goal3)
+        fig, ax = plt.subplots(figsize = (10,10))
+        xBias = 0
+        xVsList = []
+        zVsList = []
+        prevAdd = 0
+        for xPix in range(0, len(newImageX[yPix])):
+            zVal = int(newImageX[yPix][xPix] / (255 / dataSize)) + (dataSize * 0.25)
+            if zVal > dataSize:
+                zVal = dataSize
+            zRadius = zVal * (radSize / dataSize)
+            zRadius = radSize - zRadius
+            xErr = (len(newImageX[yPix]) * 0.5) - xPix
+            xAdd = zRadius * 1.0
+            if xErr < 0.0:
+                xAdd *= (-1.0)
+            elif xErr > 0.0:
+                xAdd *= (1.0)
+            xBias += ((xAdd + prevAdd) * 0.5) * addFactor
+            prevAdd = xAdd
+            #zRadius = zRadius ** 1.3
+            xValGraph = int(xPix * (dataSize / len(newImageX[yPix])))
+            xVsList.append(xValGraph)
+            zVsList.append(zVal)
+            #print(f"{zVal}  {xValGraph}  {xPix}  {yPix}  {zRadius}")
+        goal = [(goalX + xBias), dataSize]
+        obsListLocs = []
+        obsListRads = []
+        for hg in range(0, len(xVsList)):
+            zRadius = zVsList[hg] * (radSize / dataSize)
+            zRadius = radSize - zRadius
+            obsListLocs.append((xVsList[hg], zVsList[hg]))
+            obsListRads.append(zRadius)
+            delx, dely, loc, r = add_obstacle(X,Y, delx,dely,goal, xVsList[hg], zVsList[hg], zRadius)
+            plot_graph(X, Y, delx, dely , 'Obstacle',fig, ax, loc, r , 'm')
+        #delx, dely = add_obstacles(X,Y, delx,dely,goal, obsListLocs, obsListRads)
+        #print(obsListLocs)
+        #print(obsListRads)
+        strm = ax.streamplot(X,Y,delx,dely, start_points=seek_points,linewidth=3, cmap='autu')
+        segs = strm.lines.get_segments()
+        num_pts = len(segs)
+        flow_line = np.full((num_pts, 2), np.nan)
+        for i in range(num_pts):
+            flow_line[i,:] = segs[i][0,:]
+        prevXV = 0
+        prevYV = 0
+        prevDeriv = 0
+        xIntegral = 0
+        xCompTot = 0
+        yCompTot = 0
+        for o in flow_line:
+            if o[1] < (dataSize * 0.7):
+                xV = (round(o[0], 2) - originPoint)
+                yV = (round(o[1], 2))
+                xCompTot += xV
+                yCompTot += (yV - prevYV)
+                #print(yCompTot)
+                currXInt = (((xV + prevXV) * 0.5) * (yV - prevYV))
+                xIntegral += currXInt
+                prevXV = xV
+                prevYV = yV
+        yVector[0] += xCompTot
+        yVector[1] += yCompTot
+        print(f"Y: {xBias} {yVector}")
+        print(" ")
+        plt.show()
+        plt.close()
+        time.sleep(0.2)"""
+    v0.value = yCompensate.value
+    v1.value = zCompensate.value
+    return yVector, totalYInt
+
+
+
+
+
 
 
 def getDirection(disps):
+
+
     he, we = disps.shape
 
     disk = disps.copy()
-    s = 7
-    r=2
-    originPoint = (dataSize * 0.5) + 0.0
+    #s = 5
+    #r=1
+    originPoint = (dataSize * 0.5)
+    print(originPoint)
     seek_points = np.array([[originPoint,0]])
-    goalX = int(dataSize * 0.5)
+    goalX = dataSize * 0.5
     goal = [goalX,dataSize]
-    stepx = int(we / 8)
-    stepy = int(he / 8)
-    yDim = int(he / stepy)
-    xDim = int(we / stepx)
+
     blurred = blur(disps);
     newImageX = blurred[0]
     newImageY = blurred[1]
@@ -284,182 +592,53 @@ def getDirection(disps):
     print("  ")
     #print(hb)
     #print(newImageY)
-    radSize = 3.0
+    radSize = dataSize / 3
 
     goal = [goalX,dataSize]
-    goal2 = [int(dataSize * 0.75),dataSize]
-    goal3 = [int(dataSize * 0.25),dataSize]
-
-    setPoin = 200
+    #goal2 = [int(dataSize * 0.75),dataSize]
+    #goal3 = [int(dataSize * 0.25),dataSize]
 
 
 
-    totalYInt = 0
-    yVector = [0, 0]
-    addFactor = 0.4
-    try:
-        for yPix in range(0, len(newImageY)):
-            X, Y = np.meshgrid(x,y)
-            fig, ax = plt.subplots(figsize = (10,10))
-            delx, dely =add_goal(X, Y, 2,  2, goal)
-            #delx, dely =add_goal(X, Y, 3,  8, goal2)
-            #delx, dely =add_goal(X, Y, 3,  8, goal3)
-            xBias = 0
-            xVsList = []
-            zVsList = []
-            prevAdd = 0
-            for xPix in range(0, len(newImageY[yPix])):
-                zVal = int(newImageY[yPix][xPix] / (255 / dataSize)) + 10
-                if zVal > dataSize:
-                    zVal = dataSize
-                zRadius = int(zVal * (radSize / dataSize))
-                zRadius = radSize - zRadius
-                xValGraph = int(xPix * (dataSize / len(newImageY[yPix])))
-                xErr = (len(newImageY[yPix]) * 0.5) - xPix
-                xAdd = zRadius * 1.0
-                if xErr < 0.0:
-                    xAdd *= (-1.0)
-                elif xErr > 0.0:
-                    xAdd *= (1.0)
-                xBias += ((xAdd + prevAdd) * 0.5) * addFactor
-                prevAdd = xAdd
-                xVsList.append(xValGraph)
-                zVsList.append(zVal)
-            goal = [(goalX + xBias), dataSize]
-            obsListLocs = []
-            obsListRads = []
-            for hg in range(0, len(xVsList)):
-                zRadius = float(zVsList[hg] * (radSize / dataSize))
-                zRadius = radSize - zRadius
-                obsListLocs.append((xVsList[hg], zVsList[hg]))
-                obsListRads.append(zRadius)
-                #delx, dely, loc, r = add_obstacle(X,Y, delx,dely,goal, xVsList[hg], zVsList[hg], zRadius)
-                #plot_graph(X, Y, delx, dely , 'Obstacle',fig, ax, loc, r , 'm')
-            delx, dely = add_obstacles(X,Y, delx,dely,goal, obsListLocs, obsListRads)
-            strm = ax.streamplot(X,Y,delx,dely, start_points=seek_points,linewidth=3, cmap='autu')
-            segs = strm.lines.get_segments()
-            num_pts = len(segs)
-            flow_line = np.full((num_pts, 2), np.nan)
-            for i in range(num_pts):
-                flow_line[i,:] = segs[i][0,:]
-            prevXV = 0
-            prevYV = 0
-            prevDeriv = 0
-            xIntegral = 0
-            xCompTot = 0
-            yCompTot = 0
-            for o in flow_line:
-                if o[1] < (dataSize * 0.7):
-                    xV = (round(o[0], 2) - originPoint)
-                    yV = (round(o[1], 2))
-                    xCompTot += xV
-                    yCompTot += (yV - prevYV)
-                    #print(yCompTot)
-                    currXInt = (((xV + prevXV) * 0.5) * (yV - prevYV))
-                    xIntegral += currXInt
-                    prevXV = xV
-                    prevYV = yV
-            print(" ")
-            xCompTot = xCompTot * (-1)
-            xIntegral = xIntegral * (-1)
-            yVector[0] += xCompTot
-            yVector[1] += yCompTot
-            print(f"y: {xBias}")
-            print(" ")
-            #totalYInt += yIntegral
-            #plt.show()
-            #plt.close()
+    addFactor = 0.8
+    """try:
+        for xPixels, yPixels in itertools.zip_longest(range(0, 10), range(0, 5)):
+            print(xPixels, yPixels)
+
+            print(len(newImageX), len(newImageY))
+
+            #time.sleep(1)
     except Exception as e:
-        print(e)
+        print(e)"""
+    #xVector0 = Value("f", 0)
+    #xVector1 = Value("f", 0)
+    #getLeanX(newImageX, radSize, addFactor, seek_points, originPoint, xVector0, xVector1)
+    print("X: ")
+    print(" ")
+    xVector0 = Value("f", 0)
+    xVector1 = Value("f", 0)
+    process1 = Process(target=getLeanX, args=((newImageX, radSize, addFactor, seek_points, originPoint, xVector0, xVector1)))
+    #xVector, totalXInt = getLeanX(newImageX, radSize, addFactor, seek_points, originPoint)
+    print("Y: ")
+    print(" ")
+    yVector0 = Value("f", 0)
+    yVector1 = Value("f", 0)
+    #process2 = Process(target=getLeanY, args=((newImageY, radSize, addFactor, seek_points, originPoint, yVector0, yVector1)))
+    #yVector, totalYInt = getLeanY(newImageY, radSize, addFactor, seek_points, originPoint)
 
 
+    process1.start()
+    #process2.start()
+    process1.join()
+    #process2.join()
 
-
-    xVector = [0, 0]
-    totalXInt = 0
-    goalX = int(dataSize * 0.5)
-    goal = [goalX,dataSize]
-    try:
-        for yPix in range(0, len(newImageX)):
-
-            X, Y = np.meshgrid(x,y)
-            delx, dely =add_goal(X, Y,2, 2 , goal)
-            #delx, dely =add_goal(X, Y,3, 8 , goal2)
-            #delx, dely =add_goal(X, Y,3, 8 , goal3)
-            fig, ax = plt.subplots(figsize = (10,10))
-            xBias = 0
-            xVsList = []
-            zVsList = []
-            prevAdd = 0
-            for xPix in range(0, len(newImageX[yPix])):
-                zVal = int(newImageX[yPix][xPix] / (255 / dataSize)) + (dataSize * 0.25)
-                if zVal > dataSize:
-                    zVal = dataSize
-                zRadius = zVal * (radSize / dataSize)
-                zRadius = radSize - zRadius
-                xErr = (len(newImageX[yPix]) * 0.5) - xPix
-                xAdd = zRadius * 1.0
-                if xErr < 0.0:
-                    xAdd *= (-1.0)
-                elif xErr > 0.0:
-                    xAdd *= (1.0)
-                xBias += ((xAdd + prevAdd) * 0.5) * addFactor
-                prevAdd = xAdd
-                #zRadius = zRadius ** 1.3
-                xValGraph = int(xPix * (dataSize / len(newImageX[yPix])))
-                xVsList.append(xValGraph)
-                zVsList.append(zVal)
-                #print(f"{zVal}  {xValGraph}  {xPix}  {yPix}  {zRadius}")
-            goal = [(goalX + xBias), dataSize]
-            obsListLocs = []
-            obsListRads = []
-            for hg in range(0, len(xVsList)):
-                zRadius = zVsList[hg] * (radSize / dataSize)
-                zRadius = radSize - zRadius
-                #obsListLocs.append((xVsList[hg], zVsList[hg]))
-                #obsListRads.append(zRadius)
-                #delx, dely, loc, r = add_obstacle(X,Y, delx,dely,goal, xVsList[hg], zVsList[hg], zRadius)
-                #plot_graph(X, Y, delx, dely , 'Obstacle',fig, ax, loc, r , 'm')
-            delx, dely = add_obstacles(X,Y, delx,dely,goal, obsListLocs, obsListRads)
-            #print(obsListLocs)
-            #print(obsListRads)
-            strm = ax.streamplot(X,Y,delx,dely, start_points=seek_points,linewidth=3, cmap='autu')
-            segs = strm.lines.get_segments()
-            num_pts = len(segs)
-            flow_line = np.full((num_pts, 2), np.nan)
-            for i in range(num_pts):
-                flow_line[i,:] = segs[i][0,:]
-            prevXV = 0
-            prevYV = 0
-            prevDeriv = 0
-            xIntegral = 0
-            xCompTot = 0
-            yCompTot = 0
-            for o in flow_line:
-                if o[1] < (dataSize * 0.7):
-                    xV = (round(o[0], 2) - originPoint)
-                    yV = (round(o[1], 2))
-                    xCompTot += xV
-                    yCompTot += (yV - prevYV)
-                    #print(yCompTot)
-                    currXInt = (((xV + prevXV) * 0.5) * (yV - prevYV))
-                    xIntegral += currXInt
-                    prevXV = xV
-                    prevYV = yV
-            print(" ")
-            xVector[0] += xCompTot
-            xVector[1] += yCompTot
-            print(f"x: {xBias}  ")
-            print(" ")
-            totalXInt += xIntegral
-            #plt.show()
-            #plt.close()
-    except Exception as e:
-        print(e)
-
+    xVector = [float(xVector0.value), float(xVector1.value)]
+    yVector = [float(yVector0.value), float(yVector1.value)]
+    #xVector = [0, 0]
+    #yVector = [0, 0]
     #xVector[0] = xVector[0] / len(newImageX)
-    totalXInt = totalXInt / len(newImageX)
-
+    #totalXInt = totalXInt / len(newImageX)
+    print(xVector, yVector)
 
     print("   ")
     vectorMag = 40
@@ -499,6 +678,10 @@ def getDirection(disps):
 
     print(f"{xVector}  {xAngle}  {xDir}  {zDir}")
     print(f"{yVector}  {yAngle}  {yDir}  {zDir}")
+    xVector = [0, 0]
+    totalXInt = 0
+    yVector = [0, 0]
+    totalYInt = 0
     #cv2.imshow("pixel", disk)
     return xDir, yDir, zDir
 
@@ -520,6 +703,9 @@ for yPix in range(0, len(disps)):
                 plot_graph(X, Y, delx, dely , 'Obstacle',fig, ax, loc, r , 'm')
                 #print(f"{xPix}   {yPix}   {disps[yPix][xPix]}  {zVal}")
 """
+
+
+
 while True:
     disparity_SGBM = stereo.compute(img1_undistorted, img2_undistorted)
 
@@ -535,9 +721,11 @@ while True:
     print(f"Total vector:  {xD}  {yD}  {zD}")
     cv2.imshow('gray', dispser)
     #plt.show()
-    cv2.waitKey()
+    k = cv2.waitKey(27)
+    if k == ord('q'):
+        break
 
-
+cv2.destroyAllWindows()
 #print(disps.shape)
 #cv2.imshow("J", disps)
 #cv2.waitKey()
