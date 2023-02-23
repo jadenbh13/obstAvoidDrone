@@ -1,19 +1,11 @@
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
 from matplotlib import cm
 import cv2
 import numpy as np
-from PIL import Image
-import math
-from numpy.lib.stride_tricks import as_strided
-from dataclasses import dataclass
 import matplotlib
-#from skimage.feature import blob_dog, blob_log, blob_doh
 import math
-from scipy.signal import argrelextrema, find_peaks
 import random
 import time
-import itertools
 from multiprocessing import Process
 from multiprocessing import Value
 from alternateApf import mainAvoid
@@ -266,7 +258,7 @@ def getDirection(disps):
     goalX = dataSize * 0.5
     goal = [goalX,dataSize]
 
-    blurred = blur(disps);
+    blurred = blur(disps)
     newImageX = blurred[0]
     newImageY = blurred[1]
 
@@ -277,7 +269,7 @@ def getDirection(disps):
     print("  ")
     #print(hb)
     #print(newImageY)
-    radSize = 5
+    radSize = 5.5
 
     goal = [goalX,dataSize]
     #goal2 = [int(dataSize * 0.75),dataSize]
@@ -286,15 +278,7 @@ def getDirection(disps):
 
 
     addFactor = 0.6
-    """try:
-        for xPixels, yPixels in itertools.zip_longest(range(0, 10), range(0, 5)):
-            print(xPixels, yPixels)
 
-            print(len(newImageX), len(newImageY))
-
-            #time.sleep(1)
-    except Exception as e:
-        print(e)"""
     #xVector0 = Value("f", 0)
     #xVector1 = Value("f", 0)
     #getLeanX(newImageX, radSize, addFactor, seek_points, originPoint, xVector0, xVector1)
